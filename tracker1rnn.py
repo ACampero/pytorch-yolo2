@@ -2,8 +2,8 @@ import sys
 import time
 from PIL import Image, ImageDraw
 from models.tiny_yolo import TinyYoloNet
-from utils import *
-from darknet import Darknet
+from utils_rnn import *
+from darknet_rnn import Darknet
 import pdb
 import cv2
 import numpy as np
@@ -12,6 +12,7 @@ import torch.autograd as autograd
 import torch.nn as nn
 import torch.optim as optim
 import math
+import copy
 
 def detect(cfgfile, weightfile, video):
     m = Darknet(cfgfile)
@@ -32,12 +33,11 @@ def detect(cfgfile, weightfile, video):
         else:
             break
     frames = frames[:20]
-    cv2.imshow(cfgfile,frames[1])    
 
     for sized in frames:
-        boxes = do_detect(m, sized, 0.5, 0.4, use_cuda)
+        boxes, convrep = do_detect(m, sized, 0.5, 0.4, use_cuda)
         all_boxes.append(boxes)
-    return frames, all_boxes
+    return frames, all_boxes, convrep
 
 
 def display_object(track, frames):
@@ -51,33 +51,47 @@ def display_object(track, frames):
 def preprocess(total_boxes, object):
     ###['person', 'bicycle', 'car', 'motorbike', 'aeroplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'sofa', 'pottedplant', 'bed', 'diningtable', 'toilet', 'tvmonitor', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
     ### Get only tracks of correct object and make sure it exists in every frame...
-    []
     for i in range(len(total_boxes)):
         for j in range(len(total_boxes[i])):
             if total_boxes[i][j][6] != object:
                 total_boxes[i].remove(total_boxes[i][j]) 
     return total_boxes
 
-def dist(boxes_one,boxes_two):
-    transition = torch.zeros(len(boxes_one), len(boxes_two))
-    for i in range(len(boxes_one)):
-        for j in range(len(boxes_two)):
-            transition[i][j] = math.log(1-math.sqrt((boxes_one[i][0] - boxes_two[j][0])**2 + (boxes_one[i][1] - boxes_two[j][1])**2))
+def dist(trans_boxes):
+    ## This is messy
+    ##If it gets len 4 then it is T0: b1xb2  x  T1:b1xb2 but it got it in disorder so it goes 0,2,1,3 
+    if len(trans_boxes)==2:
+        transition = torch.zeros(len(trans_boxes[0]), len(trans_boxes[1]))
+        for i in range(len(trans_boxes[0])):
+            for j in range(len(trans_boxes[1])):
+                transition[i][j] = math.log(1-math.sqrt((trans_boxes[0][i][0] - trans_boxes[1][j][0])**2 + \
+                                                       (trans_boxes[0][i][1] - trans_boxes[1][j][1])**2))
+    #else:
+    #    transition = torch.zeros(len(trans_boxes[0]), len(trans_boxes[2]), len(trans_boxes[1]), len(trans_boxes[3]))
+    #    for i in range(len(trans_boxes[0])):
+    #        for j in range(len(trans_boxes[2])):
+    #            for x in range(len(trans_boxes[1])):
+    #                for y in range(len(trans_boxes[3])):
+    #                    transition[i][x][j][y] += math.log(1-math.sqrt((trans_boxes[0][i][0] - trans_boxes[2][j][0])**2 + \
+    #                                                                   (trans_boxes[0][i][1] - trans_boxes[2][j][1])**2))
+    #                    transition[i][x][j][y] += math.log(1-math.sqrt((trans_boxes[1][x][0] - trans_boxes[3][y][0])**2 + \
+    #                                                                  (trans_boxes[1][x][1] - trans_boxes[3][y][1])**2))
     return transition
 
 class wordrnn_tracker(nn.Module):
-    def __init__(self, hidden_size, n_layers, dropout=0.2):
+    def __init__(self, input_size, hidden_size, n_layers=1, batch_s=1, dropout=0.2):
         super(wordrnn_tracker, self).__init__()
         self.lstm = nn.LSTM(input_size, hidden_size, n_layers=1)
         self.linear = nn.Linear(hidden_size, 1)
 
-    def init_hidden(self, batch_s):
+    def init_hidden(self, batch_s=1):
         return (Variable(torch.zeros(n_layers,batch_s,hidden_size).cuda()),
          Variable(torch.zeros(n_layers,batch_s,hidden_size).cuda())) 
 
     def forward(self, detection, hidden):
         output, hidden = self.lstm(detection, hidden)
         output = self.linear(output)
+        output = F.logsigmoid(output)
         return output, hidden
 
 def crop_image(img, box):
@@ -106,19 +120,120 @@ def optical_flow(img1,img2):
     rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
     return rgb
 
-def object_tracker(boxes):
-    ##Detect a single object tracker assuming all are detections of same category, that will be specified by the word.
-    forward_var = torch.log(torch.Tensor([boxes[0][item][-2] for item in range(len(boxes[0]))]))
-    best_tagid = [] ## All best paths
-    for t in range(1,len(boxes)):
-        transition = dist(boxes[t-1],boxes[t])
-        next = forward_var.expand(transition.size()) + transition
-        _, tag_id = torch.max(next,0)
-        best_tagid.append(tag_id)
-        next = torch.sum(next,0)
-        #pdb.set_trace()
-        forward_var = next + torch.log(torch.Tensor([boxes[t][item][-2] for item in range(len(boxes[t]))])) 
+def object_tracker(all, word, convrep, hidden_size):
+    detections = []
+    size_det = [] 
+    for i,object in enumerate(word):
+        detections.append(preprocess(all, object)) ##All detections of same category
+        size_det.append(len(detections[i][0]))
+    forward_var = torch.zeros(size_det)
+    ## time 0
+    if len(detections)==1:
+        forward_var += torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))])))
+    else:    
+        for i,boxes in enumerate(detections):
+            if i==0:
+                forward_aux = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))]))).view(-1,1)
+            if i==1:
+                forward_aux = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))])))
+            forward_aux.expand(size_det)
+            forward_var += forward_aux
     
+    ##Assuming at most 2 objects per word
+    for i, item in enumerate(detections[0][0]):
+        input = convrep[:,:,item[7],item[8]].contiguous().view(-1)
+        all_models = dict()
+        if len(word)>1:
+            for j,item2 in enumerate(detections[1][0]):
+                input = torch.cat((input,convrep[:,item2[7],item2[8]].contiguous().view(-1)),0)
+                model_rnn = word_rnn_tracker(input.size(),hidden_size)
+                model_rnn.cuda()
+                model_rnn.zero_grad()
+                hidden = model_rnn.init_hidden()
+                output, hidden = model_rnn(input,hidden)
+                all_models[(i,j)] =  (copy.deepcopy(model_rnn), hidden)
+                forward_var[i,j] += output
+        else:
+            model_rnn = word_rnn_tracker(input.size(),hidden_size)
+            model_rnn.cuda()
+            model_rnn.zero_grad()
+            hidden = model_rnn.init_hidden()
+            output, hidden = model_rnn(input, hidden)
+            all_models[(i)] = (copy.deepcopy(model_rnn), hidden)
+            forward_var[i] += output  
+
+
+    best_tagid = [] ## All best paths
+    for t in range(1,len(all)):
+        distances = []
+        size_future = []
+        for dim in len(detections):
+            trans_boxes = []
+            trans_boxes.append(detections[dim][t-1])
+            trans_boxes.append(detections[dim][t])   
+            transition = dist(trans_boxes)
+            distances.append(transition)
+            size_future.append(transition.size()[1])
+        
+        if len(detections)==2:
+            future_var = torch.zeros(size_future)
+            for future_i in future_var.size()[0]:
+                for future_j in future_var.size()[1]:
+                    current_var = copy.deepcopy(forward_var)
+                    for current_i in current_var.size()[0]:
+                        for current_j in current_var.size()[1]:
+                            current_var[current_i][current_j] += distances[0][current_i][future_i] + \
+                                                                 distances[1][current_j][future_j]
+                    future_var[future_i][future_j] += current_var.sum()
+                    aux ,tag_id_1 = torch.max(current_var,0)
+                    _, tag_id_2 = torch.max(aux,0)
+                    tag_id = (tag_id_1[tag_id_2],tag_id_2)
+                    best_tagid.append(tag_id)
+
+            forward_var = future_var    
+
+        if len(detections)==1: 
+            next = forward_var.expand(transition.size()) + transition
+            _, tag_id = torch.max(next,0)
+            best_tagid.append((tag_id))
+            next = torch.sum(next,0)
+            #pdb.set_trace()
+            forward_var = next 
+
+        ##Add the next detection probabilities
+        if len(detections)==1:
+       	    forward_var += torch.log(torch.Tensor([boxes[t][item][5] for item in range(len(boxes[t]))])))
+        else: 
+            for i,boxes in enumerate(detections):
+       	        if i==0:
+                    forward_aux = torch.log(torch.Tensor([boxes[t][item][5] for item in range(len(boxes[t]))]))).view(-1,1)         
+                if i==1:
+       	       	    forward_aux = torch.log(torch.Tensor([boxes[t][item][5] for item in range(len(boxes[t]))])))
+       	        forward_aux.expand(size_det)
+                forward_var += forward_aux
+
+        ##Assuming at most 2 objects per word
+        for i,item in enumerate(detections[0][t]):
+            input = convrep[:,:,item[7],item[8]].contiguous().view(-1)
+            all_models_new = dict()
+            if len(word)>1:
+                for j,item2 in enumerate(detections[1][t]):
+                    input = torch.cat((input,convrep[:,item2[7],item2[8]].contiguous().view(-1)),0)
+                    output, hidden = all_models[tag_id][0](input,all_models)
+                    all_models[(i,j)] =  (copy.deepcopy(model_rnn), hidden)
+                    forward_var[i,j] += output
+            else:
+                model_rnn = word_rnn_tracker(input.size(),hidden_size)
+                model_rnn.cuda()
+                model_rnn.zero_grad()
+                hidden = model_rnn.init_hidden()
+                output, hidden = model_rnn(input, hidden)
+                all_models[(i)] = (copy.deepcopy(model_rnn), hidden)
+                forward_var[i] += output
+
+
+
+
     ##Decode path
     path_score , tag_id = torch.max(forward_var,1)
     tag_id = tag_id[0][0]
@@ -138,10 +253,17 @@ if __name__ == '__main__':
     cfgfile = 'cfg/yolo.cfg'
     weightfile = 'yolo.weights'
     video = 'video1.mov'
-    object = 0
+    hidden_size = 100
+    lexicon = dict()
+    lexicon['chase'] = [0,0]
+    
+
     class_names = load_class_names('data/coco.names')
 
-    frames, total_boxes = detect(cfgfile, weightfile, video)
-    boxes_per_object = preprocess(total_boxes, object)
-    object_track , _ = object_tracker(boxes_per_object)
-    display_object(object_track, frames)          
+    frames, total_boxes, convrep = detect(cfgfile, weightfile, video)
+    
+    object_tracks, _  = object_tracker(boxes_per_object, lexicon['chase'], convrep, hidden_size)
+
+    display_object(object_tracks, frames)
+
+
