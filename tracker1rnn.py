@@ -58,32 +58,34 @@ def preprocess(total_boxes, object):
     return total_boxes
 
 def dist(trans_boxes):
-        transition = torch.zeros(len(trans_boxes[0]), len(trans_boxes[1]))
-        for i in range(len(trans_boxes[0])):
-            for j in range(len(trans_boxes[1])):
-                transition[i][j] = math.log(1-math.sqrt((trans_boxes[0][i][0] - trans_boxes[1][j][0])**2 + \
-                                                       (trans_boxes[0][i][1] - trans_boxes[1][j][1])**2))
-    #else:
-    #    transition = torch.zeros(len(trans_boxes[0]), len(trans_boxes[2]), len(trans_boxes[1]), len(trans_boxes[3]))
-    #    for i in range(len(trans_boxes[0])):
-    #        for j in range(len(trans_boxes[2])):
-    #            for x in range(len(trans_boxes[1])):
-    #                for y in range(len(trans_boxes[3])):
-    #                    transition[i][x][j][y] += math.log(1-math.sqrt((trans_boxes[0][i][0] - trans_boxes[2][j][0])**2 + \
-    #                                                                   (trans_boxes[0][i][1] - trans_boxes[2][j][1])**2))
-    #                    transition[i][x][j][y] += math.log(1-math.sqrt((trans_boxes[1][x][0] - trans_boxes[3][y][0])**2 + \
-    #                                                                  (trans_boxes[1][x][1] - trans_boxes[3][y][1])**2))
+    transition = torch.zeros(len(trans_boxes[0]), len(trans_boxes[1]))
+    for i in range(len(trans_boxes[0])):
+        for j in range(len(trans_boxes[1])):
+            transition[i][j] = math.log(1-math.sqrt((trans_boxes[0][i][0] - trans_boxes[1][j][0])**2 + \
+                                                   (trans_boxes[0][i][1] - trans_boxes[1][j][1])**2))
     return transition
 
-class wordrnn_tracker(nn.Module):
-    def __init__(self, input_size, hidden_size, n_layers=1, batch_s=1, dropout=0.2):
-        super(wordrnn_tracker, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, n_layers=1)
+#else:
+#    transition = torch.zeros(len(trans_boxes[0]), len(trans_boxes[2]), len(trans_boxes[1]), len(trans_boxes[3]))
+#    for i in range(len(trans_boxes[0])):
+#        for j in range(len(trans_boxes[2])):
+#            for x in range(len(trans_boxes[1])):
+#                for y in range(len(trans_boxes[3])):
+#                    transition[i][x][j][y] += math.log(1-math.sqrt((trans_boxes[0][i][0] - trans_boxes[2][j][0])**2 + \
+#                                                                   (trans_boxes[0][i][1] - trans_boxes[2][j][1])**2))
+#                    transition[i][x][j][y] += math.log(1-math.sqrt((trans_boxes[1][x][0] - trans_boxes[3][y][0])**2 + \
+#                                                                  (trans_boxes[1][x][1] - trans_boxes[3][y][1])**2))
+#return transition
+
+class word_rnn_tracker(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers=1, batch_s=1, dropout=0.2):
+        super(word_rnn_tracker, self).__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers=1)
         self.linear = nn.Linear(hidden_size, 1)
 
     def init_hidden(self, batch_s=1):
-        return (Variable(torch.zeros(n_layers,batch_s,hidden_size).cuda()),
-         Variable(torch.zeros(n_layers,batch_s,hidden_size).cuda())) 
+        return (Variable(torch.zeros(num_layers,batch_s,hidden_size).cuda()),
+         Variable(torch.zeros(num_layers,batch_s,hidden_size).cuda())) 
 
     def forward(self, detection, hidden):
         output, hidden = self.lstm(detection, hidden)
@@ -125,12 +127,15 @@ def train(frames, all_boxes, convrep, word, hidden_size, optical_size):
 
     learning_rate = .001
     criterion = nn.BCELoss()
-    optimizer = torch.optim.Adam(model_rnn.parameters, lr = learning_rate)
-
+    optimizer = torch.optim.Adam(model_rnn.parameters(), lr = learning_rate)
+    ###Temporal
+    batch_temporal = dict()
+    batch_temporal['target'] = 1
+    train_iter = [batch_temporal]
     for batch in train_iter: 
         model_rnn.zero_grad()    
-        tracks, log_likelihood = object_tracker(all_boxes, word, convrep, model_rnn, optical_size)
-        loss = criterion(log_likelihood, batch.target)
+        tracks, log_likelihood = object_tracker(frames,all_boxes, word, convrep, model_rnn, optical_size)
+        loss = criterion(log_likelihood, batch['target'])
 
         loss.backward
         optimizer.step()
@@ -145,7 +150,7 @@ def object_tracker(frames, all_boxes, convrep, word, model_rnn, optical_size):
 
     if len(detections)==1:
         #time 0
-        forward_var += torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))]))
+        forward_var = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))]))
 
         for i, item in enumerate(detections[0][0]):
             input = convrep[:,:,item[7],item[8]].contiguous().view(-1) 
@@ -293,7 +298,7 @@ def object_tracker(frames, all_boxes, convrep, word, model_rnn, optical_size):
         
         best_path.reverse()
         track1 = []
-        track2 = 
+        track2 = []
         for i in range(len(best_path)):
             track1.append(boxes[i][best_path[0][i]])
             track2.append(boxes[i][best_path[1][i]])
@@ -304,16 +309,16 @@ def object_tracker(frames, all_boxes, convrep, word, model_rnn, optical_size):
         
 if __name__ == '__main__':
 
-    cfgfile = 'cfg/yolo.cfg'
-    weightfile = 'yolo.weights'
+    cfgfile = 'cfg/yolo-pretrained.cfg'
+    weightfile = 'yolo-pretrained.weights'
     video = 'video1.mov'
     hidden_size = 100
     optical_size = 10
     lexicon = dict()
-    lexicon['chase'] = [0,0]
+    lexicon['chase'] = [12,12]
     
 
-    class_names = load_class_names('data/coco.names')
+    class_names = load_class_names('data/pretrained.names')
 
     frames, total_boxes, convrep = detect(cfgfile, weightfile, video)
     

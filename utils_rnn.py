@@ -11,6 +11,7 @@ import pdb
 
 import struct # get_image_size
 import imghdr # get_image_size
+#CUDA_LAUNCH_BLOCKING=1
 
 def sigmoid(x):
     return 1.0/(math.exp(-x)+1.)
@@ -335,7 +336,7 @@ def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=1):
         img = img.cuda()
     img = torch.autograd.Variable(img)
     t2 = time.time()
-
+    #pdb.set_trace()
     output, convrep = model(img)
     output = output.data
     #for j in range(100):

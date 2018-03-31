@@ -30,6 +30,7 @@ class Reorg(nn.Module):
         assert(W % stride == 0)
         ws = stride
         hs = stride
+        #pdb.set_trace()
         x = x.view(B, C, H/hs, hs, W/ws, ws).transpose(3,4).contiguous()
         x = x.view(B, C, H/hs*W/ws, hs*ws).transpose(2,3).contiguous()
         x = x.view(B, C, hs*ws, H/hs, W/ws).transpose(1,2).contiguous()
@@ -78,6 +79,7 @@ class Darknet(nn.Module):
         self.seen = 0
 
     def forward(self, x):
+        #pdb.set_trace()
         ind = -2
         self.loss = None
         outputs = dict()
@@ -125,7 +127,7 @@ class Darknet(nn.Module):
                 continue
             else:
                 print('unknown type %s' % (block['type']))
-        pdb.set_trace()
+        #pdb.set_trace()
         return x, outputs[29]
 
     def print_network(self):
