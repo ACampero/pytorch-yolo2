@@ -40,6 +40,7 @@ def detect(cfgfile, weightfile, video):
     for sized in frames:
         boxes = do_detect(m, sized, 0.5, 0.4, use_cuda)
         all_boxes.append(boxes)
+    #pdb.set_trace()
     return frames, all_boxes
 
 def display_object(track, frames):
@@ -80,7 +81,6 @@ def object_tracker(boxes):
         forward_var = next + torch.Tensor([boxes[t][item][-2] for item in range(len(boxes[t]))]) 
     
     ##Decode path
-
     path_score , tag_id = torch.max(forward_var,1)
     tag_id = tag_id[0][0]
     best_path = [tag_id]
@@ -98,6 +98,7 @@ if __name__ == '__main__':
 
     cfgfile = 'cfg/yolo.cfg'
     weightfile = 'yolo.weights'
+    #video = '00060-2633-2713.avi'
     video = 'video1.mov'
     object = 0
 

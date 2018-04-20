@@ -18,7 +18,8 @@ def detect(cfgfile, weightfile, imgfile):
         namesfile = 'data/coco.names'
     else:
         namesfile = 'data/names'
-    
+    ###Comment below line if uncommented
+    ###namesfile = 'data/pretrained.names'
     use_cuda = 1
     if use_cuda:
         m.cuda()

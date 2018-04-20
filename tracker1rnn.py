@@ -36,6 +36,7 @@ def detect(cfgfile, weightfile, video):
 
     for sized in frames:
         boxes, convrep = do_detect(m, sized, 0.5, 0.4, use_cuda)
+        #pdb.set_trace()
         all_boxes.append(boxes)
     return frames, all_boxes, convrep
 
@@ -134,7 +135,7 @@ def train(frames, all_boxes, convrep, word, hidden_size, optical_size):
     train_iter = [batch_temporal]
     for batch in train_iter: 
         model_rnn.zero_grad()    
-        tracks, log_likelihood = object_tracker(frames,all_boxes, word, convrep, model_rnn, optical_size)
+        tracks, log_likelihood = object_tracker(frames,all_boxes, convrep, word, model_rnn, optical_size)
         loss = criterion(log_likelihood, batch['target'])
 
         loss.backward
@@ -147,11 +148,10 @@ def object_tracker(frames, all_boxes, convrep, word, model_rnn, optical_size):
     all_hidden = dict()
     for i, object in enumerate(word):
         detections.append(preprocess(all_boxes, object)) ##All detections of same category
-
     if len(detections)==1:
         #time 0
-        forward_var = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))]))
-
+        forward_var = torch.log(torch.Tensor([all_boxes[0][item][5] for item in range(len(all_boxes[0]))]))
+        #pdb.set_trace()
         for i, item in enumerate(detections[0][0]):
             input = convrep[:,:,item[7],item[8]].contiguous().view(-1) 
             input = torch.cat((input,torch.zeros(1,optical_size**2)),0)
@@ -209,11 +209,14 @@ def object_tracker(frames, all_boxes, convrep, word, model_rnn, optical_size):
         #time 0
         for i,boxes in enumerate(detections):
             if i==0:
-                forward_aux = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))])).view(-1,1)
+                forward_aux1 = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))])).view(-1,1)
             if i==1:
-                forward_aux = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))]))
-            forward_aux.expand(forward_var.size())
-            forward_var += forward_aux
+                forward_aux2 = torch.log(torch.Tensor([boxes[0][item][5] for item in range(len(boxes[0]))]))
+        #pdb.set_trace()
+        forward_var = torch.zeros(forward_aux1.size()[1],forward_aux2.size()[0])
+        forward_aux1.expand(forward_var.size())
+        forward_aux2.expand(forward_var.size())
+        forward_var = forward_aux1 + forward_aux2
     
         for i, item in enumerate(detections[0][0]):
             input = convrep[:,:,item[7],item[8]].contiguous().view(-1)
@@ -311,7 +314,7 @@ if __name__ == '__main__':
 
     cfgfile = 'cfg/yolo-pretrained.cfg'
     weightfile = 'yolo-pretrained.weights'
-    video = 'video1.mov'
+    video = 'data/pretrained/corpus/clips/00028-1340-1430.avi'
     hidden_size = 100
     optical_size = 10
     lexicon = dict()
@@ -322,7 +325,7 @@ if __name__ == '__main__':
 
     frames, total_boxes, convrep = detect(cfgfile, weightfile, video)
     
-    model_trained, object_tracks = train (frames, total_boxes, convrep, lexicon['chase'], hidden_size, optical_size)
+    model_trained, object_tracks = train(frames, total_boxes, convrep, lexicon['chase'], hidden_size, optical_size)
     #object_tracks, _  = object_tracker(boxes_per_object, lexicon['chase'], convrep, hidden_size)
     display_object(object_tracks, frames)
 

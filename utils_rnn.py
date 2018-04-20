@@ -170,7 +170,6 @@ def get_region_boxes(output, conf_thresh, num_classes, anchors, num_anchors, onl
                         conf =  det_confs[ind]
                     else:
                         conf = det_confs[ind] * cls_max_confs[ind]
-    
                     if conf > conf_thresh:
                         bcx = xs[ind]
                         bcy = ys[ind]
@@ -343,8 +342,6 @@ def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=1):
     #    sys.stdout.write('%f ' % (output.storage()[j]))
     #print('')
     t3 = time.time()
-    #print('output', output)
-   
     boxes = get_region_boxes(output, conf_thresh, model.num_classes, model.anchors, model.num_anchors)[0]
     #print('boxes',boxes)
     #for j in range(len(boxes)):
